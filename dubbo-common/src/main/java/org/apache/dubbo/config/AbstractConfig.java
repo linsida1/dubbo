@@ -28,12 +28,10 @@ import org.apache.dubbo.common.utils.CollectionUtils;
 import org.apache.dubbo.common.utils.MethodUtils;
 import org.apache.dubbo.common.utils.ReflectUtils;
 import org.apache.dubbo.common.utils.StringUtils;
-import org.apache.dubbo.config.context.ConfigManager;
 import org.apache.dubbo.config.support.Parameter;
 import org.apache.dubbo.rpc.model.ApplicationModel;
 import org.apache.dubbo.rpc.model.AsyncMethodInfo;
 
-import javax.annotation.PostConstruct;
 import java.beans.BeanInfo;
 import java.beans.IntrospectionException;
 import java.beans.Introspector;
@@ -262,7 +260,7 @@ public abstract class AbstractConfig implements Serializable {
         }).collect(Collectors.toSet());
     }
 
-    private static String extractPropertyName(String setter) throws Exception {
+    protected static String extractPropertyName(String setter) {
         String propertyName = setter.substring("set".length());
         propertyName = propertyName.substring(0, 1).toLowerCase() + propertyName.substring(1);
         return propertyName;
@@ -451,13 +449,14 @@ public abstract class AbstractConfig implements Serializable {
     public List<String> getPrefixes() {
         List<String> prefixes = new ArrayList<>();
         if (StringUtils.hasText(this.getId())) {
-            // dubbo.{tag-name}s.id
+            // dubbo.{tag-name}s.{id}
             prefixes.add(CommonConstants.DUBBO + "." + getPluralTagName(this.getClass()) + "." + this.getId());
         }
 
         // check name
         String name = ReflectUtils.getProperty(this, "getName");
         if (StringUtils.hasText(name)) {
+            // dubbo.{tag-name}s.{name}
             String prefix = CommonConstants.DUBBO + "." + getPluralTagName(this.getClass()) + "." + name;
             if (!prefixes.contains(prefix)) {
                 prefixes.add(prefix);
@@ -500,6 +499,21 @@ public abstract class AbstractConfig implements Serializable {
             Collection<Map<String, String>> instanceConfigMaps = environment.getConfigurationMaps(this, preferredPrefix);
             Map<String, String> subProperties = ConfigurationUtils.getSubProperties(instanceConfigMaps, preferredPrefix);
             InmemoryConfiguration subPropsConfiguration = new InmemoryConfiguration(subProperties);
+
+            if (logger.isDebugEnabled()) {
+                String idOrName = "";
+                if (StringUtils.hasText(this.getId())) {
+                    idOrName = "[id=" + this.getId() + "]";
+                } else {
+                    String name = ReflectUtils.getProperty(this, "getName");
+                    if (StringUtils.hasText(name)) {
+                        idOrName = "[name=" + name + "]";
+                    }
+                }
+                logger.debug("Refreshing " + this.getClass().getSimpleName() + idOrName +
+                    " with prefix [" + preferredPrefix +
+                    "], extracted props: " + subProperties);
+            }
 
             // loop methods, get override value and set the new value back to method
             Method[] methods = getClass().getMethods();
@@ -623,19 +637,6 @@ public abstract class AbstractConfig implements Serializable {
         this.isDefault = isDefault;
     }
 
-    /**
-     * Add {@link AbstractConfig instance} into {@link ConfigManager}
-     * <p>
-     * Current method will invoked by Spring or Java EE container automatically, or should be triggered manually.
-     *
-     * @see ConfigManager#addConfig(AbstractConfig)
-     * @since 2.7.5
-     */
-    @PostConstruct
-    public void addIntoConfigManager() {
-        ApplicationModel.getConfigManager().addConfig(this);
-    }
-
     @Override
     public String toString() {
         try {
@@ -665,11 +666,11 @@ public abstract class AbstractConfig implements Serializable {
 
                         Object value = method.invoke(this);
                         if (value != null) {
-                            buf.append(" ");
+                            buf.append(' ');
                             buf.append(key);
                             buf.append("=\"");
                             buf.append(key.equals("password") ? "******" : value);
-                            buf.append("\"");
+                            buf.append('\"');
                         }
                     }
                 } catch (Exception e) {
@@ -737,7 +738,8 @@ public abstract class AbstractConfig implements Serializable {
         for (Method method : methods) {
             if (MethodUtils.isGetter(method)) {
                 Parameter parameter = method.getAnnotation(Parameter.class);
-                if (parameter != null && parameter.excluded()) {
+                // filter non attribute
+                if (parameter != null && !parameter.attribute()) {
                     continue;
                 }
                 try {

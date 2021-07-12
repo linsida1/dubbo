@@ -14,23 +14,17 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.dubbo.descriptor;
+package org.apache.dubbo.config.bootstrap;
 
-import org.apache.dubbo.rpc.model.MethodDescriptor;
+import org.apache.dubbo.config.ServiceConfig;
 
-import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Test;
-
-import java.lang.reflect.Method;
-
-import static org.junit.jupiter.api.Assertions.assertEquals;
-
-public class MethodDescritorTest {
-    @Test
-    public void testMethodWithNoParameters() throws Exception {
-        Method method = DescriptorService.class.getMethod("noParameterMethod");
-        MethodDescriptor descriptor = new MethodDescriptor(method);
-        assertEquals("", descriptor.getParamDesc());
-        Assertions.assertEquals(0, descriptor.getParameterClasses().length);
-    }
+/**
+ * Mode of which of DubboBootstrap lifecycle being takeover
+ * SPRING: will be controlled by spring context
+ * MANUAL: will be controlled by users, after all services init, should call {@link DubboBootstrap#start()} to init app-level env
+ * AUTO: env will be init once {@link ServiceConfig#export()} finished
+ * SERVLET: will be controlled by tomcat
+ */
+public enum BootstrapTakeoverMode {
+    SPRING, MANUAL, AUTO, SERVLET
 }

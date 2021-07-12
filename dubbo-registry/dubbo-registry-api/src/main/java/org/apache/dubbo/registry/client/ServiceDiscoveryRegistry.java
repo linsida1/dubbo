@@ -22,7 +22,6 @@ import org.apache.dubbo.common.extension.SPI;
 import org.apache.dubbo.common.logger.Logger;
 import org.apache.dubbo.common.logger.LoggerFactory;
 import org.apache.dubbo.common.utils.CollectionUtils;
-import org.apache.dubbo.common.utils.StringUtils;
 import org.apache.dubbo.metadata.MappingChangedEvent;
 import org.apache.dubbo.metadata.MappingListener;
 import org.apache.dubbo.metadata.ServiceNameMapping;
@@ -37,20 +36,15 @@ import org.apache.dubbo.registry.support.FailbackRegistry;
 
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.TreeSet;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 import static java.lang.String.format;
-import static java.util.Collections.emptySet;
-import static java.util.Collections.unmodifiableSet;
-import static java.util.stream.Collectors.toSet;
-import static java.util.stream.Stream.of;
 import static org.apache.dubbo.common.constants.CommonConstants.CHECK_KEY;
 import static org.apache.dubbo.common.constants.CommonConstants.DUBBO;
 import static org.apache.dubbo.common.constants.CommonConstants.GROUP_CHAR_SEPARATOR;
@@ -59,14 +53,10 @@ import static org.apache.dubbo.common.constants.CommonConstants.INTERFACE_KEY;
 import static org.apache.dubbo.common.constants.CommonConstants.PROTOCOL_KEY;
 import static org.apache.dubbo.common.constants.CommonConstants.PROVIDER_SIDE;
 import static org.apache.dubbo.common.constants.CommonConstants.VERSION_KEY;
-import static org.apache.dubbo.common.constants.RegistryConstants.PROVIDED_BY;
 import static org.apache.dubbo.common.constants.RegistryConstants.REGISTRY_CLUSTER_KEY;
 import static org.apache.dubbo.common.constants.RegistryConstants.REGISTRY_TYPE_KEY;
 import static org.apache.dubbo.common.constants.RegistryConstants.SERVICE_REGISTRY_TYPE;
-import static org.apache.dubbo.common.constants.RegistryConstants.SUBSCRIBED_SERVICE_NAMES_KEY;
 import static org.apache.dubbo.common.function.ThrowableAction.execute;
-import static org.apache.dubbo.common.utils.CollectionUtils.isEmpty;
-import static org.apache.dubbo.common.utils.StringUtils.isBlank;
 import static org.apache.dubbo.metadata.ServiceNameMapping.toStringKeys;
 import static org.apache.dubbo.registry.client.ServiceDiscoveryFactory.getExtension;
 
@@ -104,7 +94,7 @@ public class ServiceDiscoveryRegistry implements Registry {
     private final Set<String> registeredListeners = new LinkedHashSet<>();
 
     /* apps - listener */
-    private final Map<String, ServiceInstancesChangedListener> serviceListeners = new HashMap<>();
+    private final Map<String, ServiceInstancesChangedListener> serviceListeners = new ConcurrentHashMap<>();
 
     private URL registryURL;
 
@@ -227,8 +217,8 @@ public class ServiceDiscoveryRegistry implements Registry {
 
         Set<String> subscribedServices = Collections.emptySet();
         try {
-            subscribedServices = getServices(registryURL, url, listener);
-            WritableMetadataService.getDefaultExtension().putCachedMapping(ServiceNameMapping.buildMappingKey(url), subscribedServices);
+            ServiceNameMapping serviceNameMapping = ServiceNameMapping.getDefaultExtension();
+            subscribedServices = serviceNameMapping.getAndListenServices(registryURL, url, new DefaultMappingListener(url, subscribedServices, listener));
         } catch (Exception e) {
             logger.warn("Cannot find app mapping for service " + url.getServiceInterface() + ", will not migrate.", e);
         }
@@ -306,39 +296,30 @@ public class ServiceDiscoveryRegistry implements Registry {
         String protocolServiceKey = url.getServiceKey() + GROUP_CHAR_SEPARATOR + url.getParameter(PROTOCOL_KEY, DUBBO);
 
         // register ServiceInstancesChangedListener
-        ServiceInstancesChangedListener serviceListener = serviceListeners.computeIfAbsent(serviceNamesKey, k -> {
-            ServiceInstancesChangedListener serviceInstancesChangedListener = serviceDiscovery.createListener(serviceNames);
-            serviceInstancesChangedListener.setUrl(url);
-            serviceNames.forEach(serviceName -> {
-                List<ServiceInstance> serviceInstances = serviceDiscovery.getInstances(serviceName);
-                if (CollectionUtils.isNotEmpty(serviceInstances)) {
-                    serviceInstancesChangedListener.onEvent(new ServiceInstancesChangedEvent(serviceName, serviceInstances));
+        boolean serviceListenerRegistered = true;
+        ServiceInstancesChangedListener serviceInstancesChangedListener;
+        synchronized (this) {
+            serviceInstancesChangedListener = serviceListeners.get(serviceNamesKey);
+            if (serviceInstancesChangedListener == null) {
+                serviceInstancesChangedListener = serviceDiscovery.createListener(serviceNames);
+                serviceInstancesChangedListener.setUrl(url);
+                for (String serviceName : serviceNames) {
+                    List<ServiceInstance> serviceInstances = serviceDiscovery.getInstances(serviceName);
+                    if (CollectionUtils.isNotEmpty(serviceInstances)) {
+                        serviceInstancesChangedListener.onEvent(new ServiceInstancesChangedEvent(serviceName, serviceInstances));
+                    }
                 }
-            });
-            return serviceInstancesChangedListener;
-        });
-
-        serviceListener.setUrl(url);
-        listener.addServiceListener(serviceListener);
-        serviceListener.addListenerAndNotify(protocolServiceKey, listener);
-        registerServiceInstancesChangedListener(url, serviceListener);
-    }
-
-    /**
-     * Register the {@link ServiceInstancesChangedListener} If absent
-     *
-     * @param url      {@link URL}
-     * @param listener the {@link ServiceInstancesChangedListener}
-     */
-    private void registerServiceInstancesChangedListener(URL url, ServiceInstancesChangedListener listener) {
-        String listenerId = createListenerId(url, listener);
-        if (registeredListeners.add(listenerId)) {
-            serviceDiscovery.addServiceInstancesChangedListener(listener);
+                serviceListenerRegistered = false;
+                serviceListeners.put(serviceNamesKey, serviceInstancesChangedListener);
+            }
         }
-    }
 
-    private String createListenerId(URL url, ServiceInstancesChangedListener listener) {
-        return listener.getServiceNames() + ":" + url.toString(VERSION_KEY, GROUP_KEY, PROTOCOL_KEY);
+        serviceInstancesChangedListener.setUrl(url);
+        listener.addServiceListener(serviceInstancesChangedListener);
+        serviceInstancesChangedListener.addListenerAndNotify(protocolServiceKey, listener);
+        if (!serviceListenerRegistered) {
+            serviceDiscovery.addServiceInstancesChangedListener(serviceInstancesChangedListener);
+        }
     }
 
 //    public void doSubscribe(URL url, NotifyListener listener) {
@@ -424,58 +405,8 @@ public class ServiceDiscoveryRegistry implements Registry {
                 || Objects.equals(protocol, targetURL.getProtocol());
     }
 
-    public Set<String> getRegisteredListeners() {
-        return registeredListeners;
-    }
-
     public Map<String, ServiceInstancesChangedListener> getServiceListeners() {
         return serviceListeners;
-    }
-
-
-    /**
-     * 1.developer explicitly specifies the application name this interface belongs to
-     * 2.check Interface-App mapping
-     * 3.use the services specified in registry url.
-     *
-     * @param subscribedURL
-     * @return
-     */
-    protected Set<String> getServices(URL registryURL, URL subscribedURL, NotifyListener listener) {
-        Set<String> subscribedServices = new TreeSet<>();
-        Set<String> globalConfiguredSubscribingServices = parseServices(registryURL.getParameter(SUBSCRIBED_SERVICE_NAMES_KEY));
-
-        String serviceNames = subscribedURL.getParameter(PROVIDED_BY);
-        if (StringUtils.isNotEmpty(serviceNames)) {
-            logger.info(subscribedURL.getServiceInterface() + " mapping to " + serviceNames + " instructed by provided-by set by user.");
-            subscribedServices.addAll(parseServices(serviceNames));
-        }
-
-        if (isEmpty(subscribedServices)) {
-            Set<String> mappedServices = findMappedServices(registryURL, subscribedURL, new DefaultMappingListener(subscribedURL, subscribedServices, listener));
-            logger.info(subscribedURL.getServiceInterface() + " mapping to " + mappedServices + " instructed by remote metadata center.");
-            subscribedServices.addAll(mappedServices);
-            if (isEmpty(subscribedServices)) {
-                logger.info(subscribedURL.getServiceInterface() + " mapping to " + globalConfiguredSubscribingServices + " by default.");
-                subscribedServices.addAll(globalConfiguredSubscribingServices);
-            }
-        }
-        return subscribedServices;
-    }
-
-    protected Set<String> findMappedServices(URL registryURL, URL subscribedURL, MappingListener listener) {
-        Set<String> result = new LinkedHashSet<>();
-        ServiceNameMapping serviceNameMapping = ServiceNameMapping.getDefaultExtension();
-        result.addAll(serviceNameMapping.getAndListen(subscribedURL, listener));
-        return result;
-    }
-
-    public static Set<String> parseServices(String literalServices) {
-        return isBlank(literalServices) ? emptySet() :
-                unmodifiableSet(of(literalServices.split(","))
-                        .map(String::trim)
-                        .filter(StringUtils::isNotEmpty)
-                        .collect(toSet()));
     }
 
     private class DefaultMappingListener implements MappingListener {

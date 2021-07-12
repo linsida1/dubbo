@@ -74,10 +74,18 @@ public interface MetadataReport {
         return false;
     }
 
+    default boolean registerServiceAppMapping(String serviceKey, String application, URL url) {
+        return false;
+    }
+
     /**
      * Service<-->Application Mapping -- START
      **/
     default Set<String> getServiceAppMapping(String serviceKey, MappingListener listener, URL url) {
+        return Collections.emptySet();
+    }
+
+    default Set<String> getServiceAppMapping(String serviceKey, URL url) {
         return Collections.emptySet();
     }
 }

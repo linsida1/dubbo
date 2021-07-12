@@ -14,29 +14,18 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.dubbo.config.spring.context.annotation;
+package org.apache.dubbo.config.spring.api;
 
-import org.apache.dubbo.common.context.Lifecycle;
+public interface MethodCallback {
+    void oninvoke(String request);
 
-import java.lang.annotation.Documented;
-import java.lang.annotation.ElementType;
-import java.lang.annotation.Inherited;
-import java.lang.annotation.Retention;
-import java.lang.annotation.RetentionPolicy;
-import java.lang.annotation.Target;
+    void onreturn(String response, String request);
 
-/**
- * Enables Dubbo {@link Lifecycle} components
- *
- * @since 2.7.5
- * @deprecated as 2.7.6,  Dubbo {@link Lifecycle} components will be registered automatically. Current annotation may be
- * removed in the future
- */
-@Target({ElementType.TYPE})
-@Retention(RetentionPolicy.RUNTIME)
-@Inherited
-@Documented
-//@Import(DubboLifecycleComponentRegistrar.class) // Disabled since 2.7.6
-@Deprecated
-public @interface EnableDubboLifecycle {
+    void onthrow(Throwable ex, String request);
+
+    String getOnInvoke();
+
+    String getOnReturn();
+
+    String getOnThrow();
 }

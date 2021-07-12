@@ -148,6 +148,8 @@ public class DubboBootstrap {
 
     private final AtomicBoolean awaited = new AtomicBoolean(false);
 
+    private volatile BootstrapTakeoverMode takeoverMode = BootstrapTakeoverMode.AUTO;
+
     private final Lock lock = new ReentrantLock();
 
     private final Condition condition = lock.newCondition();
@@ -255,9 +257,9 @@ public class DubboBootstrap {
         DubboShutdownHook.getDubboShutdownHook().unregister();
     }
 
-    private boolean isOnlyRegisterProvider() {
+    private boolean isRegisterConsumerInstance() {
         Boolean registerConsumer = getApplication().getRegisterConsumer();
-        return registerConsumer == null || !registerConsumer;
+        return Boolean.TRUE.equals(registerConsumer);
     }
 
     private String getMetadataType() {
@@ -760,7 +762,7 @@ public class DubboBootstrap {
         for (MetadataReportConfig metadataReportConfig : metadataReportConfigs) {
             ConfigValidationUtils.validateMetadataConfig(metadataReportConfig);
             if (!metadataReportConfig.isValid()) {
-                return;
+                continue;
             }
             MetadataReportInstance.init(metadataReportConfig);
         }
@@ -792,7 +794,9 @@ public class DubboBootstrap {
                 .map(this::registryAsConfigCenter)
                 .forEach(configManager::addConfigCenter);
 
-            logger.info("use registry as config-center: " + configManager.getConfigCenters());
+            if (configManager.getConfigCenters().size() > 0) {
+                logger.info("use registry as config-center: " + configManager.getConfigCenters());
+            }
         }
     }
 
@@ -846,7 +850,9 @@ public class DubboBootstrap {
                 .map(this::registryAsMetadataCenter)
                 .forEach(configManager::addMetadataReport);
 
-            logger.info("use registry as metadata-center: " + configManager.getMetadataConfigs());
+            if (configManager.getMetadataConfigs().size() > 0) {
+                logger.info("use registry as metadata-center: " + configManager.getMetadataConfigs());
+            }
         }
     }
 
@@ -1078,7 +1084,6 @@ public class DubboBootstrap {
     public DubboBootstrap start() {
         if (started.compareAndSet(false, true)) {
             startup.set(false);
-            initialized.set(false);
             shutdown.set(false);
             awaited.set(false);
 
@@ -1089,8 +1094,8 @@ public class DubboBootstrap {
             // 1. export Dubbo Services
             exportServices();
 
-            // Not only provider register
-            if (!isOnlyRegisterProvider() || hasExportedServices()) {
+            // If register consumer instance or has exported services
+            if (isRegisterConsumerInstance() || hasExportedServices()) {
                 // 2. export MetadataService
                 exportMetadataService();
                 // 3. Register the local ServiceInstance if required
@@ -1283,8 +1288,10 @@ public class DubboBootstrap {
                 ExecutorService executor = executorRepository.getExportReferExecutor();
                 CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
                     try {
-                        sc.export();
-                        exportedServices.add(sc);
+                        if (!sc.isExported()) {
+                            sc.export();
+                            exportedServices.add(sc);
+                        }
                     } catch (Throwable t) {
                         logger.error("export async catch error : " + t.getMessage(), t);
                     }
@@ -1292,8 +1299,10 @@ public class DubboBootstrap {
 
                 asyncExportingFutures.add(future);
             } else {
-                sc.export();
-                exportedServices.add(sc);
+                if (!sc.isExported()) {
+                    sc.export();
+                    exportedServices.add(sc);
+                }
             }
         }
     }
@@ -1391,12 +1400,13 @@ public class DubboBootstrap {
             logger.info("Start registering instance address to registry.");
             getServiceDiscoveries().forEach(serviceDiscovery ->
             {
-                calInstanceRevision(serviceDiscovery, serviceInstance);
+                ServiceInstance serviceInstanceForRegistry = new DefaultServiceInstance((DefaultServiceInstance) serviceInstance);
+                calInstanceRevision(serviceDiscovery, serviceInstanceForRegistry);
                 if (logger.isDebugEnabled()) {
-                    logger.info("Start registering instance address to registry" + serviceDiscovery.getUrl() + ", instance " + serviceInstance);
+                    logger.info("Start registering instance address to registry" + serviceDiscovery.getUrl() + ", instance " + serviceInstanceForRegistry);
                 }
                 // register metadata
-                serviceDiscovery.register(serviceInstance);
+                serviceDiscovery.register(serviceInstanceForRegistry);
             });
         }
     }
@@ -1518,6 +1528,7 @@ public class DubboBootstrap {
 
     private void destroyMetadataReports() {
         AbstractMetadataReportFactory.destroy();
+        MetadataReportInstance.reset();
         ExtensionLoader.resetExtensionLoader(MetadataReportFactory.class);
     }
 
@@ -1579,4 +1590,12 @@ public class DubboBootstrap {
         return configManager.getApplicationOrElseThrow();
     }
 
+    public void setTakeoverMode(BootstrapTakeoverMode takeoverMode) {
+        this.started.set(false);
+        this.takeoverMode = takeoverMode;
+    }
+
+    public BootstrapTakeoverMode getTakeoverMode() {
+        return takeoverMode;
+    }
 }

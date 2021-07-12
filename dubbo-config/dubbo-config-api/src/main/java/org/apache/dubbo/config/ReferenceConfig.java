@@ -250,7 +250,7 @@ public class ReferenceConfig<T> extends ReferenceConfigBase<T> {
 
         //init serivceMetadata
         initServiceMetadata(consumer);
-        serviceMetadata.setServiceType(getActualInterface());
+        serviceMetadata.setServiceType(getServiceInterfaceClass());
         // TODO, uncomment this line once service key is unified
         serviceMetadata.setServiceKey(URL.buildKey(interfaceName, group, version));
 
@@ -394,31 +394,13 @@ public class ReferenceConfig<T> extends ReferenceConfigBase<T> {
                 List<Invoker<?>> invokers = new ArrayList<Invoker<?>>();
                 URL registryURL = null;
                 for (URL url : urls) {
-                    Invoker<?> referInvoker = REF_PROTOCOL.refer(interfaceClass, url);
-                    if (shouldCheck()) {
-                        if (referInvoker.isAvailable()) {
-                            invokers.add(referInvoker);
-                        } else {
-                            referInvoker.destroy();
-                        }
-                    } else {
-                        invokers.add(referInvoker);
-                    }
+                    // For multi-registry scenarios, it is not checked whether each referInvoker is available.
+                    // Because this invoker may become available later.
+                    invokers.add(REF_PROTOCOL.refer(interfaceClass, url));
 
                     if (UrlUtils.isRegistry(url)) {
                         registryURL = url; // use last registry url
                     }
-                }
-
-                if (shouldCheck() && invokers.size() == 0) {
-                    throw new IllegalStateException("Failed to check the status of the service "
-                            + interfaceName
-                            + ". No provider available for the service "
-                            + (group == null ? "" : group + "/")
-                            + interfaceName +
-                            (version == null ? "" : ":" + version)
-                            + " from the multi registry cluster"
-                            + " use dubbo version " + Version.getVersion());
                 }
 
                 if (registryURL != null) { // registry url is available

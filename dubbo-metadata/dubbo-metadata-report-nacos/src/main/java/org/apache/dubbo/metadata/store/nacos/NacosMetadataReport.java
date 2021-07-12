@@ -26,8 +26,8 @@ import org.apache.dubbo.common.utils.MD5Utils;
 import org.apache.dubbo.common.utils.StringUtils;
 import org.apache.dubbo.metadata.MappingChangedEvent;
 import org.apache.dubbo.metadata.MappingListener;
-import org.apache.dubbo.metadata.ServiceNameMapping;
 import org.apache.dubbo.metadata.MetadataInfo;
+import org.apache.dubbo.metadata.ServiceNameMapping;
 import org.apache.dubbo.metadata.report.identifier.BaseMetadataIdentifier;
 import org.apache.dubbo.metadata.report.identifier.KeyTypeEnum;
 import org.apache.dubbo.metadata.report.identifier.MetadataIdentifier;
@@ -110,12 +110,12 @@ public class NacosMetadataReport extends AbstractMetadataReport {
     private void setServerAddr(URL url, Properties properties) {
         StringBuilder serverAddrBuilder =
                 new StringBuilder(url.getHost()) // Host
-                        .append(":")
+                        .append(':')
                         .append(url.getPort()); // Port
         // Append backup parameter as other servers
         String backup = url.getParameter(BACKUP_KEY);
         if (backup != null) {
-            serverAddrBuilder.append(",").append(backup);
+            serverAddrBuilder.append(',').append(backup);
         }
         String serverAddr = serverAddrBuilder.toString();
         properties.put(SERVER_ADDR, serverAddr);
@@ -239,6 +239,12 @@ public class NacosMetadataReport extends AbstractMetadataReport {
             addCasServiceMappingListener(serviceKey, group, listener);
         }
         String content = getConfig(serviceKey, group);
+        return ServiceNameMapping.getAppNames(content);
+    }
+
+    @Override
+    public Set<String> getServiceAppMapping(String serviceKey, URL url) {
+        String content = getConfig(serviceKey, DEFAULT_MAPPING_GROUP);
         return ServiceNameMapping.getAppNames(content);
     }
 

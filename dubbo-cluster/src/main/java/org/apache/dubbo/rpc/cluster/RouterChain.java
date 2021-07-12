@@ -27,7 +27,6 @@ import org.apache.dubbo.common.utils.NetUtils;
 import org.apache.dubbo.rpc.Invocation;
 import org.apache.dubbo.rpc.Invoker;
 import org.apache.dubbo.rpc.RpcException;
-import org.apache.dubbo.rpc.cluster.directory.StaticDirectory;
 import org.apache.dubbo.rpc.cluster.router.state.AddrCache;
 import org.apache.dubbo.rpc.cluster.router.state.BitList;
 import org.apache.dubbo.rpc.cluster.router.state.RouterCache;
@@ -45,15 +44,16 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 
 import static org.apache.dubbo.rpc.cluster.Constants.ROUTER_KEY;
+import static org.apache.dubbo.rpc.cluster.Constants.STATE_ROUTER_KEY;
 
 /**
  * Router chain
  */
 public class RouterChain<T> {
-    public static final Logger LOGGER = LoggerFactory.getLogger(RouterChain.class);
+    private static final Logger logger = LoggerFactory.getLogger(RouterChain.class);
 
     // full list of addresses from registry, classified by method name.
-    private List<Invoker<T>> invokers = Collections.emptyList();
+    private volatile List<Invoker<T>> invokers = Collections.emptyList();
 
     // containing all routers, reconstruct every time 'route://' urls change.
     private volatile List<Router> routers = Collections.emptyList();
@@ -69,7 +69,7 @@ public class RouterChain<T> {
 
     protected URL url;
 
-    protected AtomicReference<AddrCache<T>> cache = new AtomicReference<>();
+    private AtomicReference<AddrCache<T>> cache = new AtomicReference<>();
 
     private final Semaphore loopPermit = new Semaphore(1);
     private final Semaphore loopPermitNotify = new Semaphore(1);
@@ -77,8 +77,6 @@ public class RouterChain<T> {
     private final ExecutorService loopPool;
 
     private boolean firstBuildCache = true;
-
-    private static final Logger logger = LoggerFactory.getLogger(StaticDirectory.class);
 
     public static <T> RouterChain<T> buildChain(URL url) {
         return new RouterChain<>(url);
@@ -97,7 +95,7 @@ public class RouterChain<T> {
 
         List<StateRouterFactory> extensionStateRouterFactories = ExtensionLoader.getExtensionLoader(
             StateRouterFactory.class)
-            .getActivateExtension(url, "stateRouter");
+            .getActivateExtension(url, STATE_ROUTER_KEY);
 
         List<StateRouter> stateRouters = extensionStateRouterFactories.stream()
             .map(factory -> factory.getRouter(url, this))
@@ -118,7 +116,7 @@ public class RouterChain<T> {
         this.sort();
     }
 
-    public void initWithStateRouters(List<StateRouter> builtinRouters) {
+    private void initWithStateRouters(List<StateRouter> builtinRouters) {
         this.builtinStateRouters = builtinRouters;
         this.stateRouters = new ArrayList<>(builtinRouters);
     }
@@ -149,6 +147,10 @@ public class RouterChain<T> {
 
     public List<Router> getRouters() {
         return routers;
+    }
+
+    public List<StateRouter> getStateRouters() {
+        return stateRouters;
     }
 
     private void sort() {
@@ -301,7 +303,7 @@ public class RouterChain<T> {
             try {
                 router.stop();
             } catch (Exception e) {
-                LOGGER.error("Error trying to stop router " + router.getClass(), e);
+                logger.error("Error trying to stop router " + router.getClass(), e);
             }
         }
         routers = Collections.emptyList();
@@ -311,7 +313,7 @@ public class RouterChain<T> {
             try {
                 router.stop();
             } catch (Exception e) {
-                LOGGER.error("Error trying to stop stateRouter " + router.getClass(), e);
+                logger.error("Error trying to stop stateRouter " + router.getClass(), e);
             }
         }
         stateRouters = Collections.emptyList();

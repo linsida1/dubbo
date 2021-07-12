@@ -14,20 +14,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-package org.apache.dubbo.remoting.api;
+package org.apache.dubbo.config.spring.context.event;
 
-import org.apache.dubbo.common.URL;
-import org.apache.dubbo.common.url.component.ServiceConfigURL;
-import org.apache.dubbo.remoting.Constants;
-import org.apache.dubbo.remoting.RemotingException;
+import org.apache.dubbo.config.spring.context.DubboConfigBeanInitializer;
+import org.springframework.context.ApplicationEvent;
 
-public class NettyServerTest {
-
-    public static void main(String[] args) throws RemotingException {
-        URL url = new ServiceConfigURL("transport", "localhost", 8898,
-                new String[]{Constants.BIND_PORT_KEY, String.valueOf(8898)});
-
-        final PortUnificationServer server = new PortUnificationServer(url);
-        System.out.println(server.isBound());
+/**
+ * An {@link ApplicationEvent} after Dubbo service/reference annotation has been processed.
+ * <p />
+ * NOTE: This event is used to trigger init {@link DubboConfigBeanInitializer}
+ */
+public class DubboAnnotationInitedEvent extends ApplicationEvent {
+    /**
+     * Create a new {@code ApplicationEvent}.
+     *
+     * @param source the object on which the event initially occurred or with
+     *               which the event is associated (never {@code null})
+     */
+    public DubboAnnotationInitedEvent(Object source) {
+        super(source);
     }
 }
